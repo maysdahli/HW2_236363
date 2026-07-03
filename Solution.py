@@ -68,13 +68,13 @@ def create_tables() -> None:
             CREATE TABLE IF NOT EXISTS Ratings (
                 customer_id INT REFERENCES Customers(cust_id) ON DELETE CASCADE,
                 dish_id INT REFERENCES Dishes(dish_id),
-                rating INT CHECK (rating >= 1 AND rating <= 5),
+                rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
                 PRIMARY KEY (customer_id, dish_id)
             );
         """)
 
         conn.execute("""
-            CREATE VIEW OrderTotals AS
+            CREATE OR REPLACE VIEW OrderTotals AS
             SELECT o.order_id,
                    o.customer_id,
                    o.delivery_fee + o.tip + COALESCE(SUM(od.price_of_order * od.amount), 0) AS total_price
@@ -127,22 +127,140 @@ def drop_tables() -> None:
 
 def add_customer(customer: Customer) -> ReturnValue:
     # TODO: implement
-    pass
+    conn = None
+    try :
+        cust_id = customer.get_cust_id()
+        full_name = customer.get_full_name()
+        age = customer.get_age()
+        phone = customer.get_phone()
+
+        if cust_id is None or full_name is None or age is None or phone is None:
+            return ReturnValue.BAD_PARAMS
+        if cust_id <= 0 or age < 18 or age > 120 or len(phone) != 10 :
+            return ReturnValue.BAD_PARAMS
+
+        conn = Connector.DBConnector()
+        conn.execute(sql.SQL("""
+                INSERT INTO Customers(cust_id, full_name, age, phone)
+                VALUES ({cust_id}, {full_name}, {age}, {phone});
+        """).format(
+            cust_id=sql.Literal(cust_id),
+            full_name=sql.Literal(full_name),
+            age=sql.Literal(age),
+            phone=sql.Literal(phone)
+        ))
+        return ReturnValue.OK
+    except DatabaseException as e:
+        msg = str(e).lower()
+
+        if "duplicate" in msg or "unique" in msg or "23505" in msg:
+            return ReturnValue.ALREADY_EXISTS
+
+        return ReturnValue.ERROR
+
+    finally:
+        if conn:
+            conn.close()
+
 
 
 def get_customer(customer_id: int) -> Customer:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                SELECT cust_id, full_name, age, phone 
+                FROM Customers 
+                WHERE cust_id = {}
+            """).format(sql.Literal(customer_id))
+        result, _ = conn.execute(query)
+        if result.is_empty():  # Alternatively: if not result.rows:
+            return BadCustomer()
+
+        row = result.rows[0]
+        customer = Customer()
+        customer.set_cust_id(row[0])
+        customer.set_full_name(row[1])
+        customer.set_age(row[2])
+        customer.set_phone(row[3])
+
+        return customer
+    except DatabaseException as e:
+        return BadCustomer()
+
+    finally:
+        if conn:
+            conn.close()
+
 
 
 def delete_customer(customer_id: int) -> ReturnValue:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+
+        query = sql.SQL("""
+                DELETE FROM Customers 
+                WHERE cust_id = {}
+                RETURNING cust_id;
+            """).format(sql.Literal(customer_id))
+
+        result, _ = conn.execute(query)
+        conn.commit()
+
+        if result.is_empty():
+            return ReturnValue.NOT_EXISTS
+
+        return ReturnValue.OK
+
+    except DatabaseException as e:
+        return ReturnValue.ERROR
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def add_order(order: Order) -> ReturnValue:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        order_id = order.get_order_id()
+        date = order.get_datetime()
+        delivery_fee = order.get_delivery_fee()
+        delivery_address = order.get_delivery_address()
+        tip = order.get_tip()
+
+        if order_id is None or delivery_fee is None or delivery_address is None or tip is None:
+            return ReturnValue.BAD_PARAMS
+        if order_id <= 0 or tip < 0 or len(delivery_address) < 5 or delivery_fee < 0 :
+            return ReturnValue.BAD_PARAMS
+        conn = Connector.DBConnector()
+        conn.execute(sql.SQL("""
+                        INSERT INTO Orders(order_id, date, delivery_fee, delivery_address, tip)
+                        VALUES ({order_id}, {date}, {delivery_fee}, {delivery_address}, {tip});
+                """).format(
+            order_id=sql.Literal(order_id),
+            date=sql.Literal(date),
+            delivery_fee=sql.Literal(delivery_fee),
+            delivery_address=sql.Literal(delivery_address),
+            tip=sql.Literal(tip)
+        ))
+        return ReturnValue.OK
+
+    except DatabaseException as e:
+        msg = str(e).lower()
+
+        if "duplicate" in msg or "unique" in msg or "23505" in msg:
+            return ReturnValue.ALREADY_EXISTS
+
+        return ReturnValue.ERROR
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_order(order_id: int) -> Order:
@@ -157,7 +275,44 @@ def delete_order(order_id: int) -> ReturnValue:
 
 def add_dish(dish: Dish) -> ReturnValue:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        dish_id = dish.get_dish_id()
+        name = dish.get_name()
+        price = dish.get_price()
+        is_active = dish.get_is_active()
+
+        # Check for null attributes
+        if dish_id is None or name is None or price is None or is_active is None:
+            return ReturnValue.BAD_PARAMS
+
+        # Check constraints: dish_id positive, price positive, name length >= 4
+        if dish_id <= 0 or price <= 0 or len(name) < 4:
+            return ReturnValue.BAD_PARAMS
+
+        conn = Connector.DBConnector()
+        conn.execute(sql.SQL("""
+                    INSERT INTO Dishes(dish_id, name, price, is_active)
+                    VALUES ({dish_id}, {name}, {price}, {is_active});
+            """).format(
+            dish_id=sql.Literal(dish_id),
+            name=sql.Literal(name),
+            price=sql.Literal(price),
+            is_active=sql.Literal(is_active)
+        ))
+        return ReturnValue.OK
+
+    except DatabaseException as e:
+        msg = str(e).lower()
+
+        if "duplicate" in msg or "unique" in msg or "23505" in msg:
+            return ReturnValue.ALREADY_EXISTS
+
+        return ReturnValue.ERROR
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_dish(dish_id: int) -> Dish:
