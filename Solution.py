@@ -14,199 +14,114 @@ from Business.OrderDish import OrderDish
 # Basic database functions
 
 
-def create_tables():
+def create_tables() -> None:
     conn = None
     try:
         conn = Connector.DBConnector()
+        # Create tables
 
-        queries = [
-
-            """
-            CREATE TABLE IF NOT EXISTS customers (
-                cust_id INTEGER PRIMARY KEY,
-                full_name TEXT NOT NULL,
-                age INTEGER NOT NULL,
-                phone TEXT NOT NULL,
-
-                CHECK (cust_id > 0),
-                CHECK (age BETWEEN 18 AND 120),
-                CHECK (CHAR_LENGTH(phone) = 10)
+        # Customers table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Customers (
+                cust_id INT PRIMARY KEY CHECK (cust_id > 0),
+                full_name VARCHAR NOT NULL,
+                age INT NOT NULL CHECK (age >= 18 and age <= 120),
+                phone CHAR(10) NOT NULL CHECK (LENGTH(phone) = 10)
             );
-            """,
+        """)
 
-            """
-            CREATE TABLE IF NOT EXISTS orders (
-                order_id INTEGER PRIMARY KEY,
-                date TIMESTAMP(0) WITHOUT TIME ZONE NOT NULL,
-                delivery_fee NUMERIC NOT NULL,
-                delivery_address TEXT NOT NULL,
-                tip NUMERIC NOT NULL,
-
-                CHECK (order_id > 0),
-                CHECK (delivery_fee >= 0),
-                CHECK (CHAR_LENGTH(delivery_address) >= 5),
-                CHECK (tip >= 0)
+        # Orders table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Orders (
+                order_id INT PRIMARY KEY CHECK (order_id > 0),
+                date TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                delivery_fee DECIMAL NOT NULL CHECK (delivery_fee >= 0),
+                delivery_address VARCHAR NOT NULL CHECK (LENGTH(delivery_address) >= 5),
+                tip DECIMAL NOT NULL CHECK (tip >= 0),
+                customer_id INT REFERENCES Customers(cust_id) ON DELETE SET NULL
             );
-            """,
+        """)
 
-            """
-            CREATE TABLE IF NOT EXISTS dishes (
-                dish_id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                price NUMERIC NOT NULL,
-                is_active BOOLEAN NOT NULL,
-
-                CHECK (dish_id > 0),
-                CHECK (price > 0),
-                CHECK (CHAR_LENGTH(name) >= 4)
+        # Dishes table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Dishes (
+                dish_id INT PRIMARY KEY CHECK (dish_id > 0),
+                name VARCHAR NOT NULL CHECK (LENGTH(name) >= 4),
+                price DECIMAL NOT NULL CHECK (price > 0),
+                is_active BOOLEAN NOT NULL
             );
-            """,
+        """)
 
-            """
-            CREATE TABLE IF NOT EXISTS customer_orders (
-                cust_id INTEGER NOT NULL,
-                order_id INTEGER PRIMARY KEY,
-
-                FOREIGN KEY (cust_id)
-                    REFERENCES customers(cust_id)
-                    ON DELETE CASCADE,
-
-                FOREIGN KEY (order_id)
-                    REFERENCES orders(order_id)
-                    ON DELETE CASCADE
+        # OrderDishes table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS OrderDishes (
+                order_id INT REFERENCES Orders(order_id) ON DELETE CASCADE,
+                dish_id INT REFERENCES Dishes(dish_id),
+                amount INT NOT NULL CHECK (amount >= 0),
+                price_of_order DECIMAL NOT NULL,
+                PRIMARY KEY (order_id, dish_id)
             );
-            """,
+        """)
 
-            """
-            CREATE TABLE IF NOT EXISTS order_items (
-                order_id INTEGER NOT NULL,
-                dish_id INTEGER NOT NULL,
-                amount INTEGER NOT NULL,
-                price_at_order NUMERIC NOT NULL,
-
-                PRIMARY KEY (order_id, dish_id),
-
-                FOREIGN KEY (order_id)
-                    REFERENCES orders(order_id)
-                    ON DELETE CASCADE,
-
-                FOREIGN KEY (dish_id)
-                    REFERENCES dishes(dish_id),
-
-                CHECK (amount >= 0),
-                CHECK (price_at_order > 0)
+        # Ratings table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Ratings (
+                customer_id INT REFERENCES Customers(cust_id) ON DELETE CASCADE,
+                dish_id INT REFERENCES Dishes(dish_id),
+                rating INT CHECK (rating >= 1 AND rating <= 5),
+                PRIMARY KEY (customer_id, dish_id)
             );
-            """,
+        """)
 
-            """
-            CREATE TABLE IF NOT EXISTS ratings (
-                cust_id INTEGER NOT NULL,
-                dish_id INTEGER NOT NULL,
-                rating INTEGER NOT NULL,
+        conn.execute("""
+            CREATE VIEW OrderTotals AS
+            SELECT o.order_id,
+                   o.customer_id,
+                   o.delivery_fee + o.tip + COALESCE(SUM(od.price_of_order * od.amount), 0) AS total_price
+            FROM Orders o
+            LEFT JOIN OrderDishes od ON o.order_id = od.order_id
+            GROUP BY o.order_id, o.customer_id, o.delivery_fee, o.tip;
+        """)
 
-                PRIMARY KEY (cust_id, dish_id),
-
-                FOREIGN KEY (cust_id)
-                    REFERENCES customers(cust_id)
-                    ON DELETE CASCADE,
-
-                FOREIGN KEY (dish_id)
-                    REFERENCES dishes(dish_id),
-
-                CHECK (rating BETWEEN 1 AND 5)
-            );
-            """,
-
-            """
-            CREATE OR REPLACE VIEW order_total_view AS
-            SELECT
-                o.order_id,
-                co.cust_id,
-                o.delivery_fee
-                + o.tip
-                + COALESCE(SUM(oi.amount * oi.price_at_order), 0) AS total_price
-            FROM orders o
-            LEFT JOIN order_items oi
-                ON o.order_id = oi.order_id
-            LEFT JOIN customer_orders co
-                ON o.order_id = co.order_id
-            GROUP BY
-                o.order_id,
-                co.cust_id,
-                o.delivery_fee,
-                o.tip;
-            """
-        ]
-
-        for query in queries:
-            conn.execute(query)
-
-        conn.commit()
-
-    except Exception:
-        if conn is not None:
-            conn.rollback()
-
+    except DatabaseException as e:
+        print(e)
     finally:
-        if conn is not None:
+        if conn:
             conn.close()
 
 
-def clear_tables():
+def clear_tables() -> None:
     conn = None
     try:
         conn = Connector.DBConnector()
-
-        queries = [
-            "DELETE FROM ratings;",
-            "DELETE FROM order_items;",
-            "DELETE FROM customer_orders;",
-            "DELETE FROM orders;",
-            "DELETE FROM dishes;",
-            "DELETE FROM customers;"
-        ]
-
-        for query in queries:
-            conn.execute(query)
-
-        conn.commit()
-
-    except Exception:
-        if conn is not None:
-            conn.rollback()
-
+        conn.execute("DELETE FROM OrderDishes;")
+        conn.execute("DELETE FROM Ratings;")
+        conn.execute("DELETE FROM Orders;")
+        conn.execute("DELETE FROM Dishes;")
+        conn.execute("DELETE FROM Customers;")
+    except DatabaseException as e:
+        print(e)
     finally:
-        if conn is not None:
+        if conn:
             conn.close()
 
 
-def drop_tables():
+def drop_tables() -> None:
     conn = None
     try:
         conn = Connector.DBConnector()
-
-        queries = [
-            "DROP VIEW IF EXISTS order_total_view;",
-            "DROP TABLE IF EXISTS ratings;",
-            "DROP TABLE IF EXISTS order_items;",
-            "DROP TABLE IF EXISTS customer_orders;",
-            "DROP TABLE IF EXISTS orders;",
-            "DROP TABLE IF EXISTS dishes;",
-            "DROP TABLE IF EXISTS customers;"
-        ]
-
-        for query in queries:
-            conn.execute(query)
-
-        conn.commit()
-
-    except Exception:
-        if conn is not None:
-            conn.rollback()
-
+        conn.execute("DROP VIEW IF EXISTS OrderTotals CASCADE;")
+        conn.execute("DROP TABLE IF EXISTS OrderDishes CASCADE;")
+        conn.execute("DROP TABLE IF EXISTS Ratings CASCADE;")
+        conn.execute("DROP TABLE IF EXISTS Orders CASCADE;")
+        conn.execute("DROP TABLE IF EXISTS Dishes CASCADE;")
+        conn.execute("DROP TABLE IF EXISTS Customers CASCADE;")
+    except DatabaseException as e:
+        print(e)
     finally:
-        if conn is not None:
+        if conn:
             conn.close()
+
 
 # CRUD API
 
@@ -294,9 +209,12 @@ def customer_deleted_rating_on_dish(cust_id: int, dish_id: int) -> ReturnValue:
     # TODO: implement
     pass
 
+
 def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
     # TODO: implement
     pass
+
+
 # ---------------------------------- BASIC API: ----------------------------------
 
 # Basic API
@@ -315,6 +233,7 @@ def get_customers_spent_max_avg_amount_money() -> List[int]:
 def get_most_profitable_dish_in_period(start: datetime, end: datetime) -> Dish:
     # TODO: implement
     pass
+
 
 def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
     # TODO: implement
