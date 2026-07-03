@@ -174,8 +174,8 @@ def get_customer(customer_id: int) -> Customer:
                 FROM Customers 
                 WHERE cust_id = {}
             """).format(sql.Literal(customer_id))
-        result, _ = conn.execute(query)
-        if result.is_empty():  # Alternatively: if not result.rows:
+        rows_affected, result = conn.execute(query)
+        if rows_affected == 0:  
             return BadCustomer()
 
         row = result.rows[0]
@@ -204,13 +204,11 @@ def delete_customer(customer_id: int) -> ReturnValue:
         query = sql.SQL("""
                 DELETE FROM Customers 
                 WHERE cust_id = {}
-                RETURNING cust_id;
             """).format(sql.Literal(customer_id))
 
-        result, _ = conn.execute(query)
-        conn.commit()
+        rows_affected, _ = conn.execute(query)
 
-        if result.is_empty():
+        if rows_affected == 0:
             return ReturnValue.NOT_EXISTS
 
         return ReturnValue.OK
@@ -275,9 +273,9 @@ def get_order(order_id: int) -> Order:
                 WHERE order_id = {};
             """).format(sql.Literal(order_id))
 
-        result, _ = conn.execute(query)
+        rows_affected, result = conn.execute(query)
 
-        if result.is_empty():
+        if rows_affected == 0:
             return BadOrder()
 
         row = result.rows[0]
@@ -308,13 +306,11 @@ def delete_order(order_id: int) -> ReturnValue:
         query = sql.SQL("""
                 DELETE FROM Orders
                 WHERE order_id = {}
-                RETURNING order_id;
             """).format(sql.Literal(order_id))
 
-        result, _ = conn.execute(query)
-        conn.commit()
+        rows_affected, _ = conn.execute(query)
 
-        if result.is_empty():
+        if rows_affected == 0:
             return ReturnValue.NOT_EXISTS
 
         return ReturnValue.OK
@@ -381,9 +377,9 @@ def get_dish(dish_id: int) -> Dish:
                 WHERE dish_id = {};
             """).format(sql.Literal(dish_id))
 
-        result, _ = conn.execute(query)
+        rows_affected, result = conn.execute(query)
 
-        if result.is_empty():
+        if rows_affected == 0:
             return BadDish()
 
         row = result.rows[0]
@@ -405,10 +401,33 @@ def get_dish(dish_id: int) -> Dish:
 
 
 def update_dish_price(dish_id: int, price: float) -> ReturnValue:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        rows_affected, _ = conn.execute(sql.SQL("""
+                    UPDATE Dishes
+                    SET price = {price}
+                    WHERE dish_id = {dish_id} AND is_active = TRUE;
+            """).format(
+            dish_id=sql.Literal(dish_id),
+            price=sql.Literal(price)
+        ))
+        if rows_affected == 0:
+            return ReturnValue.NOT_EXISTS
+           
+        return ReturnValue.OK
 
+    except (DatabaseException.CHECK_VIOLATION, DatabaseException.NOT_NULL_VIOLATION):
+        return ReturnValue.BAD_PARAMS
+    
+    except DatabaseException:
+        return ReturnValue.ERROR
 
+    finally:
+        if conn:
+            conn.close()
+        
+        
 def update_dish_active_status(dish_id: int, is_active: bool) -> ReturnValue:
     # TODO: implement
     pass
