@@ -265,12 +265,66 @@ def add_order(order: Order) -> ReturnValue:
 
 def get_order(order_id: int) -> Order:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+
+        query = sql.SQL("""
+                SELECT order_id, date, delivery_fee, delivery_address, tip
+                FROM Orders
+                WHERE order_id = {};
+            """).format(sql.Literal(order_id))
+
+        result, _ = conn.execute(query)
+
+        if result.is_empty():
+            return BadOrder()
+
+        row = result.rows[0]
+
+        order = Order()
+        order.set_order_id(row[0])
+        order.set_datetime(row[1])
+        order.set_delivery_fee(row[2])
+        order.set_delivery_address(row[3])
+        order.set_tip(row[4])
+
+        return order
+
+    except DatabaseException:
+        return BadOrder()
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def delete_order(order_id: int) -> ReturnValue:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+
+        query = sql.SQL("""
+                DELETE FROM Orders
+                WHERE order_id = {}
+                RETURNING order_id;
+            """).format(sql.Literal(order_id))
+
+        result, _ = conn.execute(query)
+        conn.commit()
+
+        if result.is_empty():
+            return ReturnValue.NOT_EXISTS
+
+        return ReturnValue.OK
+
+    except DatabaseException:
+        return ReturnValue.ERROR
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def add_dish(dish: Dish) -> ReturnValue:
@@ -317,7 +371,37 @@ def add_dish(dish: Dish) -> ReturnValue:
 
 def get_dish(dish_id: int) -> Dish:
     # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+
+        query = sql.SQL("""
+                SELECT dish_id, name, price, is_active
+                FROM Dishes
+                WHERE dish_id = {};
+            """).format(sql.Literal(dish_id))
+
+        result, _ = conn.execute(query)
+
+        if result.is_empty():
+            return BadDish()
+
+        row = result.rows[0]
+
+        dish = Dish()
+        dish.set_dish_id(row[0])
+        dish.set_name(row[1])
+        dish.set_price(float(row[2]))
+        dish.set_is_active(row[3])
+
+        return dish
+
+    except DatabaseException:
+        return BadDish()
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def update_dish_price(dish_id: int, price: float) -> ReturnValue:
