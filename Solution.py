@@ -178,12 +178,12 @@ def get_customer(customer_id: int) -> Customer:
         if rows_affected == 0:  
             return BadCustomer()
 
-        row = result.rows[0]
+        row = result[0]
         customer = Customer()
-        customer.set_cust_id(row[0])
-        customer.set_full_name(row[1])
-        customer.set_age(row[2])
-        customer.set_phone(row[3])
+        customer.set_cust_id(row['cust_id'])
+        customer.set_full_name(row['full_name'])
+        customer.set_age(row['age'])
+        customer.set_phone(row['phone'])
 
         return customer
     except DatabaseException as e:
@@ -278,14 +278,14 @@ def get_order(order_id: int) -> Order:
         if rows_affected == 0:
             return BadOrder()
 
-        row = result.rows[0]
+        row = result[0]
 
         order = Order()
-        order.set_order_id(row[0])
-        order.set_datetime(row[1])
-        order.set_delivery_fee(row[2])
-        order.set_delivery_address(row[3])
-        order.set_tip(row[4])
+        order.set_order_id(row['order_id'])
+        order.set_datetime(row['date'])
+        order.set_delivery_fee(row['delivery_fee'])
+        order.set_delivery_address(row['delivery_address'])
+        order.set_tip(row['tip'])
 
         return order
 
@@ -429,18 +429,101 @@ def update_dish_price(dish_id: int, price: float) -> ReturnValue:
         
         
 def update_dish_active_status(dish_id: int, is_active: bool) -> ReturnValue:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        rows_affected, _ = conn.execute(sql.SQL("""
+                    UPDATE Dishes
+                    SET is_active = {is_active}
+                    WHERE dish_id = {dish_id};
+            """).format(
+            dish_id=sql.Literal(dish_id),
+            is_active=sql.Literal(is_active)
+        ))
+        if rows_affected == 0:
+            return ReturnValue.NOT_EXISTS
+
+        return ReturnValue.OK
+
+    except DatabaseException:
+        return ReturnValue.ERROR
+    finally:
+        if conn:
+            conn.close()
 
 
 def customer_placed_order(customer_id: int, order_id: int) -> ReturnValue:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                WITH check_status AS (      
+                    SELECT
+                        EXISTS (SELECT 1 FROM Orders WHERE order_id = {order_id}) AS order_exists,
+                        EXISTS (SELECT 1 FROM Customers WHERE cust_id = {customer_id}) AS customer_exists,
+                        (SELECT customer_id FROM Orders WHERE order_id = {order_id}) as current_customer
+                ),
+                update_customer AS (
+                    UPDATE Orders
+                    SET customer_id = {customer_id}
+                    WHERE order_id = {order_id} AND customer_id IS NULL
+                    AND EXISTS (SELECT 1 FROM Customers WHERE cust_id = {customer_id})
+                    RETURNING 1
+                )
+                SELECT order_exists, customer_exists, current_customer FROM check_status;                        
+            """).format(
+            customer_id=sql.Literal(customer_id),
+            order_id=sql.Literal(order_id)
+        )
+        rows_affected, result = conn.execute(query)
+        if result.size() == 0:
+            return ReturnValue.NOT_EXISTS
+        
+        row = result[0]   
+        if not row['order_exists'] or not row['customer_exists']:
+            return ReturnValue.NOT_EXISTS
+        if row['current_customer'] is not None:
+            return ReturnValue.ALREADY_EXISTS
+        return ReturnValue.OK
+    
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        return ReturnValue.NOT_EXISTS
+    except DatabaseException:
+        return ReturnValue.ERROR
+
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_customer_that_placed_order(order_id: int) -> Customer:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                SELECT c.cust_id, c.full_name, c.age, c.phone
+                FROM Customers c
+                JOIN Orders o ON c.cust_id = o.customer_id
+                WHERE o.order_id = {order_id};
+            """).format(order_id=sql.Literal(order_id))
+        
+        rows_affected, result = conn.execute(query)
+        if result.size() == 0:
+            return BadCustomer()
+
+        row = result[0]
+        customer = Customer()
+        customer.set_cust_id(row['cust_id'])
+        customer.set_full_name(row['full_name'])
+        customer.set_age(row['age'])
+        customer.set_phone(row['phone'])
+
+        return customer
+    except DatabaseException:
+        return BadCustomer()
+    finally:
+        if conn:
+            conn.close()
 
 
 def order_contains_dish(order_id: int, dish_id: int, amount: int) -> ReturnValue:
