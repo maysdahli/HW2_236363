@@ -834,20 +834,214 @@ def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
 
 
 def get_customers_rated_but_not_ordered() -> List[int]:
-    # TODO: implement
-    pass
+    conn = None
+    customers = []
+    try:
+        conn = Connector.DBConnector()
+
+        query = """
+            WITH lowest_rated_dishes AS (
+                SELECT d.dish_id
+                FROM Dishes d
+                LEFT JOIN Ratings r ON d.dish_id = r.dish_id
+                GROUP BY d.dish_id
+                ORDER BY COALESCE(AVG(r.rating), 3.0) ASC, d.dish_id ASC
+                LIMIT 5
+            )
+            SELECT DISTINCT r.customer_id
+            FROM Ratings r
+            JOIN lowest_rated_dishes lrd ON r.dish_id = lrd.dish_id
+            WHERE r.rating < 3
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM Orders o
+                  JOIN OrderDishes od ON o.order_id = od.order_id
+                  WHERE o.customer_id = r.customer_id
+                    AND od.dish_id = r.dish_id
+              )
+            ORDER BY r.customer_id ASC;
+        """
+
+        _, result = conn.execute(query)
+
+        for idx in range(result.size()):
+            customers.append(result[idx]['customer_id'])
+
+    except DatabaseException:
+        return []
+
+    finally:
+        if conn:
+            conn.close()
+
+    return customers
 
 
 def get_non_worth_price_increase() -> List[int]:
-    # TODO: implement
-    pass
+    conn = None
+    dishes = []
+    try:
+        conn = Connector.DBConnector()
+
+        query = """
+            WITH price_stats AS (
+                SELECT 
+                    dish_id,
+                    price_at_order,
+                    AVG(amount) * price_at_order AS avg_profit_per_order
+                FROM OrderDishes
+                GROUP BY dish_id, price_at_order
+            ),
+            current_price_stats AS (
+                SELECT 
+                    d.dish_id,
+                    d.price AS current_price,
+                    ps.avg_profit_per_order AS current_avg_profit
+                FROM Dishes d
+                JOIN price_stats ps 
+                    ON d.dish_id = ps.dish_id 
+                   AND d.price = ps.price_at_order
+                WHERE d.is_active = TRUE
+            )
+            SELECT DISTINCT cps.dish_id
+            FROM current_price_stats cps
+            WHERE EXISTS (
+                SELECT 1
+                FROM price_stats old_ps
+                WHERE old_ps.dish_id = cps.dish_id
+                  AND old_ps.price_at_order < cps.current_price
+                  AND old_ps.avg_profit_per_order > cps.current_avg_profit
+            )
+            ORDER BY cps.dish_id ASC;
+        """
+
+        _, result = conn.execute(query)
+
+        for idx in range(result.size()):
+            dishes.append(result[idx]['dish_id'])
+
+    except DatabaseException:
+        return []
+
+    finally:
+        if conn:
+            conn.close()
+
+    return dishes
 
 
 def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
-    # TODO: implement
-    pass
+    conn = None
+    profits = []
+    try:
+        conn = Connector.DBConnector()
+
+        query = sql.SQL("""
+            WITH months(month) AS (
+                SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8
+                UNION SELECT 9 UNION SELECT 10 UNION SELECT 11 UNION SELECT 12
+            ),
+            order_prices AS (
+                SELECT 
+                    o.order_id,
+                    EXTRACT(MONTH FROM o.date) AS month,
+                    o.delivery_fee + o.tip + COALESCE(SUM(od.amount * od.price_at_order), 0) AS order_profit
+                FROM Orders o
+                LEFT JOIN OrderDishes od ON o.order_id = od.order_id
+                WHERE EXTRACT(YEAR FROM o.date) = {year}
+                GROUP BY o.order_id, o.date, o.delivery_fee, o.tip
+            ),
+            monthly_profit AS (
+                SELECT 
+                    month,
+                    SUM(order_profit) AS profit
+                FROM order_prices
+                GROUP BY month
+            )
+            SELECT 
+                m.month,
+                COALESCE(SUM(mp.profit), 0) AS cumulative_profit
+            FROM months m
+            LEFT JOIN monthly_profit mp ON mp.month <= m.month
+            GROUP BY m.month
+            ORDER BY m.month DESC;
+        """).format(
+            year=sql.Literal(year)
+        )
+
+        _, result = conn.execute(query)
+
+        for idx in range(result.size()):
+            row = result[idx]
+            profits.append((row['month'], float(row['cumulative_profit'])))
+
+    except DatabaseException:
+        return []
+
+    finally:
+        if conn:
+            conn.close()
+
+    return profits
 
 
 def get_potential_dish_recommendations(cust_id: int) -> List[int]:
-    # TODO: implement
-    pass
+    conn = None
+    recommendations = []
+    try:
+        conn = Connector.DBConnector()
+
+        query = sql.SQL("""
+            WITH RECURSIVE similar_customers(customer_id) AS (
+                SELECT DISTINCT r2.customer_id
+                FROM Ratings r1
+                JOIN Ratings r2 ON r1.dish_id = r2.dish_id
+                WHERE r1.customer_id = {cust_id}
+                  AND r1.rating >= 4
+                  AND r2.rating >= 4
+                  AND r2.customer_id <> {cust_id}
+
+                UNION
+
+                SELECT DISTINCT r2.customer_id
+                FROM similar_customers sc
+                JOIN Ratings r1 
+                    ON sc.customer_id = r1.customer_id
+                JOIN Ratings r2 
+                    ON r1.dish_id = r2.dish_id
+                WHERE r1.rating >= 4
+                  AND r2.rating >= 4
+                  AND r2.customer_id <> {cust_id}
+            )
+            SELECT DISTINCT r.dish_id
+            FROM Ratings r
+            JOIN similar_customers sc 
+                ON r.customer_id = sc.customer_id
+            WHERE r.rating >= 4
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM Orders o
+                  JOIN OrderDishes od 
+                      ON o.order_id = od.order_id
+                  WHERE o.customer_id = {cust_id}
+                    AND od.dish_id = r.dish_id
+              )
+            ORDER BY r.dish_id ASC;
+        """).format(
+            cust_id=sql.Literal(cust_id)
+        )
+
+        _, result = conn.execute(query)
+
+        for idx in range(result.size()):
+            recommendations.append(result[idx]['dish_id'])
+
+    except DatabaseException:
+        return []
+
+    finally:
+        if conn:
+            conn.close()
+
+    return recommendations
