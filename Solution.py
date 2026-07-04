@@ -149,12 +149,10 @@ def add_customer(customer: Customer) -> ReturnValue:
             phone=sql.Literal(phone)
         ))
         return ReturnValue.OK
-    except DatabaseException as e:
-        msg = str(e).lower()
+    except DatabaseException.UNIQUE_VIOLATION:
+        return ReturnValue.ALREADY_EXISTS
 
-        if "duplicate" in msg or "unique" in msg or "23505" in msg:
-            return ReturnValue.ALREADY_EXISTS
-
+    except DatabaseException:
         return ReturnValue.ERROR
 
     finally:
@@ -244,12 +242,10 @@ def add_order(order: Order) -> ReturnValue:
         ))
         return ReturnValue.OK
 
-    except DatabaseException as e:
-        msg = str(e).lower()
+    except DatabaseException.UNIQUE_VIOLATION:
+        return ReturnValue.ALREADY_EXISTS
 
-        if "duplicate" in msg or "unique" in msg or "23505" in msg:
-            return ReturnValue.ALREADY_EXISTS
-
+    except DatabaseException:
         return ReturnValue.ERROR
 
     finally:
@@ -345,11 +341,13 @@ def add_dish(dish: Dish) -> ReturnValue:
         ))
         return ReturnValue.OK
 
-    except DatabaseException as e:
-        msg = str(e).lower()
 
-        if "duplicate" in msg or "unique" in msg or "23505" in msg:
-            return ReturnValue.ALREADY_EXISTS
+    except DatabaseException.UNIQUE_VIOLATION:
+
+        return ReturnValue.ALREADY_EXISTS
+
+
+    except DatabaseException:
 
         return ReturnValue.ERROR
 
@@ -795,7 +793,7 @@ def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
         conn = Connector.DBConnector()
         query = sql.SQL("""
                 WITH top_rated_dishes AS (
-                    SELECT dish_id, COALESCE(AVG(r.rating), 3.0) AS avg_rating
+                    SELECT d.dish_id, COALESCE(AVG(r.rating), 3.0) AS avg_rating
                     FROM Dishes d
                     LEFT JOIN Ratings r ON d.dish_id = r.dish_id
                     GROUP BY d.dish_id
