@@ -72,7 +72,7 @@ def create_tables() -> None:
                 PRIMARY KEY (customer_id, dish_id)
             );
         """)
-
+        # Create view for order totals
         conn.execute("""
             CREATE OR REPLACE VIEW OrderTotals AS
             SELECT o.order_id,
@@ -696,30 +696,136 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
         if conn:
             conn.close()
 
-
 # ---------------------------------- BASIC API: ----------------------------------
 
 # Basic API
 
 
 def get_order_total_price(order_id: int) -> float:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                SELECT total_price
+                FROM OrderTotals
+                WHERE order_id = {order_id};
+            """).format(order_id=sql.Literal(order_id))
+        
+        _ , result = conn.execute(query)
+        if result.size() > 0:
+            return float(result[0]['total_price'])
+         
+    except DatabaseException:
+        pass
+    finally:
+        if conn:
+            conn.close()
+    return 0.0
 
 
 def get_customers_spent_max_avg_amount_money() -> List[int]:
-    # TODO: implement
-    pass
+    conn = None
+    customers = []
+    try:
+        conn = Connector.DBConnector()
+        query = """
+            WITH customer_avg AS (
+                SELECT customer_id, AVG(total_price) AS avg_spent
+                FROM OrderTotals
+                WHERE customer_id IS NOT NULL
+                GROUP BY customer_id
+            )
+            SELECT customer_id
+            FROM customer_avg
+            WHERE avg_spent = (SELECT MAX(avg_spent) FROM customer_avg)
+            ORDER BY customer_id ASC;
+        """
+        
+        _ , result = conn.execute(query)
+
+        for idx in range(result.size()):
+            customers.append(result[idx]['customer_id'])
+
+    except DatabaseException:
+        return []
+    finally:
+        if conn:
+            conn.close()
+    return customers
 
 
 def get_most_profitable_dish_in_period(start: datetime, end: datetime) -> Dish:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                SELECT d.dish_id, d.name, d.price, d.is_active
+                FROM OrderDishes od
+                JOIN Orders o ON od.order_id = o.order_id
+                JOIN Dishes d ON od.dish_id = d.dish_id
+                WHERE o.date >= {start} AND o.date <= {end}
+                GROUP BY d.dish_id, d.name, d.price, d.is_active
+                ORDER BY SUM(od.amount * od.price_at_order) DESC , d.dish_id ASC
+                LIMIT 1;
+            """).format(
+            start=sql.Literal(start),
+            end=sql.Literal(end)
+        )
+        
+        _ , result = conn.execute(query)
+        if result.size() > 0:
+            row = result[0]
+            dish = Dish()
+            dish.set_dish_id(row['dish_id'])
+            dish.set_name(row['name'])
+            dish.set_price(float(row['price']))
+            dish.set_is_active(row['is_active'])
+            return dish
+    except DatabaseException:
+        pass
+    finally:
+        if conn:
+            conn.close()
+    return BadDish()
 
 
 def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                WITH top_rated_dishes AS (
+                    SELECT dish_id, COALESCE(AVG(r.rating), 3.0) AS avg_rating
+                    FROM Dishes d
+                    LEFT JOIN Ratings r ON d.dish_id = r.dish_id
+                    GROUP BY d.dish_id
+                    ORDER BY avg_rating DESC, d.dish_id ASC
+                    LIMIT 5
+                ),
+                customer_orders AS (
+                    SELECT DISTINCT od.dish_id
+                    FROM OrderDishes od
+                    JOIN Orders o ON od.order_id = o.order_id
+                    WHERE o.customer_id = {cust_id}
+                )
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM top_rated_dishes trd
+                    JOIN customer_orders co ON trd.dish_id = co.dish_id
+                ) AS did_order
+            """).format(cust_id=sql.Literal(cust_id))
+        
+        _ , result = conn.execute(query)
+        if result.size() > 0:
+            did_order = bool(result[0]['did_order'])
+            return did_order
+
+    except DatabaseException:
+        pass
+    finally:
+        if conn:
+            conn.close()
+    return False
 
 
 # ---------------------------------- ADVANCED API: ----------------------------------
